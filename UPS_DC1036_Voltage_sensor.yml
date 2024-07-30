@@ -1,0 +1,108 @@
+esphome:
+  name: ups-dc1036-voltage-sensor
+  platform: ESP8266
+  board: esp12e
+
+
+# GND -- GND
+# 3.3 -- V3V
+# R(PWR) -- GPIO5
+# дільник напруги -- A0
+
+#  Plus Battery
+#    <--+----------+
+#       |          |
+#       |          R1 1680 kΩ (1500 + 100 + 82)
+#       |          |
+#       |          +-----> Vout (1.0 V) A0
+#      Vin (до 16.8 В)
+#       |          |
+#       |          R2 100 kΩ
+#       |          |
+# GND <-+----------+-----> GND
+
+
+wifi:
+  ssid: "wuddi_iot"
+  password: "password"
+  domain: .lan
+  # Автоматичне збереження останньої IP-адреси
+  fast_connect: true
+  ap:
+    ssid: "UPS_DC1036_Hotspot"
+
+
+# Включення Captive Portal для налаштування WiFi
+captive_portal: 
+
+mdns:
+  disabled: false
+
+# Включення web-сервера
+web_server:
+  port: 80
+
+mqtt:
+  broker: "192.168.137.112"
+  username: "wuddi"
+  password: "password"
+
+
+sensor:
+  - platform: adc
+    pin: A0
+    name: "Battery Voltage"
+    id: battery_voltage
+    update_interval: 30s
+    filters:
+      - multiply: 16.8 # Коефіцієнт для дільника напруги (1023)
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: "ups-dc1036/battery_voltage"
+            payload: !lambda |-
+              char buffer[10];
+              sprintf(buffer, "%.2f", id(battery_voltage).state);
+              return std::string(buffer);
+
+  - platform: template
+    name: "Battery Charge"
+    id: battery_charge
+    unit_of_measurement: "%"
+    lambda: |-
+      if (id(battery_voltage).state < 11.4) {
+        return 0;
+      } else if (id(battery_voltage).state > 16.8) {
+        return 100;
+      } else {
+        return (id(battery_voltage).state - 11.4) * 100.0 / (16.8 - 11.4);
+      }
+    update_interval: 30s
+    on_value:
+      then:
+        - mqtt.publish:
+            topic: "ups-dc1036/battery_charge"
+            payload: !lambda |-
+              char buffer[10];
+              sprintf(buffer, "%.2f", id(battery_charge).state);
+              return std::string(buffer);
+
+binary_sensor:
+  - platform: gpio
+    pin: GPIO5
+    name: "UPS AC Power"
+    id: upsdc_acpower
+    device_class: "power"
+    on_state:
+      then:
+        - mqtt.publish:
+            topic: "ups-dc1036/upsdc_acpower"
+            payload: !lambda |-
+              return id(upsdc_acpower).state ? "ON" : "OFF";
+
+# Включення OTA оновлень
+ota:
+ - platform: esphome
+   password: "password"
+
+
